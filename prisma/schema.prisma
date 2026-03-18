@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String    @id @default(cuid())
+  name      String
+  email     String    @unique
+  password  String
+  role      String    @default("user")
+  createdAt DateTime  @default(now())
+
+  profile   Profile?
+  links     Link[]
+  services  Service[]
+}
+
+model Profile {
+  id           String   @id @default(cuid())
+  userId       String   @unique @map("user_id")
+  nome         String
+  display_name String?
+  uber         Boolean  @default(false)
+  app99        Boolean  @default(false)
+  eletrico     Boolean  @default(false)
+  cidade       String?
+  whatsapp     String?
+  pix          String?
+  foto         String?
+  instagram    String?
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Link {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("links")
+}
+
+model Service {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  title     String
+  url       String?
+  numero    String?
+  icon      String   @default("🔗")
+  color     String   @default("#4CAF50")
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("services")
+}
