@@ -3,7 +3,15 @@ import Stripe from "stripe";
 import { pool } from "../db.js";
 
 const router = express.Router();
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+let _stripe;
+const getStripe = () => {
+  if (!_stripe) {
+    if (!process.env.STRIPE_SECRET_KEY) throw new Error("STRIPE_SECRET_KEY não configurada");
+    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  }
+  return _stripe;
+};
 
 // ── Criar sessão de checkout ─────────────────────────────────────────────────
 router.post("/create-checkout", async (req, res) => {
@@ -11,7 +19,7 @@ router.post("/create-checkout", async (req, res) => {
     const { userId, theme } = req.body;
     if (!userId) return res.status(400).json({ error: "userId obrigatório" });
 
-    const session = await stripe.checkout.sessions.create({
+    const session = await getStripe().checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
       line_items: [
@@ -38,7 +46,7 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    event = getStripe().webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error("Webhook inválido:", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);

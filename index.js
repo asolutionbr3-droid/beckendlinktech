@@ -44,11 +44,7 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
-// Desenvolvimento local: sobe o servidor normalmente
-// Vercel: não usa listen — exporta o app como handler serverless
-if (process.env.NODE_ENV !== "production") {
-  const PORT = process.env.PORT || 3333;
-  app.listen(PORT, () => console.log(`API rodando na porta ${PORT} 🚀`));
-}
+const PORT = process.env.PORT || 3333;
+app.listen(PORT, () => console.log(`API rodando na porta ${PORT} 🚀`));
 
 export default app;
