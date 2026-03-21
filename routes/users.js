@@ -212,9 +212,11 @@ router.delete("/services/:id", async (req, res) => {
 router.get("/public/:slug", async (req, res) => {
   try {
     const { slug } = req.params;
-    
+
     const profileResult = await pool.query(
-      `SELECT p.*, u.plan FROM profiles p
+      `SELECT p.*, u.plan, u.theme,
+              l.is_premium, l.theme AS link_theme, l.qr_enabled, l.verified, l.custom_color
+       FROM profiles p
        JOIN links l ON p.user_id = l.user_id
        JOIN users u ON u.id = p.user_id
        WHERE l.slug = $1`,
@@ -225,24 +227,73 @@ router.get("/public/:slug", async (req, res) => {
       return res.json({ success: false, message: "Link não encontrado" });
     }
 
-    const plan = profileResult.rows[0].plan || 'free';
+    const row  = profileResult.rows[0];
+    const plan = row.plan || 'free';
     const limit = plan === 'premium' ? 15 : 5;
 
     const servicesResult = await pool.query(
       `SELECT id, user_id, "titulo do botão" AS title, link_url AS url, numero, icon, color, position
        FROM "serviços" WHERE user_id = $1 ORDER BY position ASC LIMIT $2`,
-      [profileResult.rows[0].user_id, limit]
+      [row.user_id, limit]
     );
 
     res.json({
-      success: true,
+      success:      true,
       plan,
-      profile: profileResult.rows[0],
-      services: servicesResult.rows
+      theme:        row.link_theme || row.theme || 'green-pro',
+      is_premium:   row.is_premium  || false,
+      qr_enabled:   row.qr_enabled  || false,
+      verified:     row.verified     || false,
+      custom_color: row.custom_color || null,
+      profile:      row,
+      services:     servicesResult.rows,
     });
   } catch (error) {
     console.error("Erro ao buscar perfil público:", error);
     res.status(500).json({ success: false, message: "Erro ao buscar perfil" });
+  }
+});
+
+// Atualizar configurações premium do link (tema, qr, cor)
+router.put("/link-settings", async (req, res) => {
+  try {
+    const { user_id, theme, qr_enabled, custom_color } = req.body;
+
+    await pool.query(
+      `UPDATE links SET
+         theme        = COALESCE($1, theme),
+         qr_enabled   = COALESCE($2, qr_enabled),
+         custom_color = COALESCE($3, custom_color),
+         updated_at   = NOW()
+       WHERE user_id = $4`,
+      [theme, qr_enabled, custom_color, user_id]
+    );
+
+    res.json({ success: true, message: "Configurações do link atualizadas" });
+  } catch (error) {
+    console.error("Erro ao atualizar link-settings:", error);
+    res.status(500).json({ success: false, message: "Erro ao atualizar configurações" });
+  }
+});
+
+// Ativar plano premium após pagamento (chamado pelo webhook do Stripe)
+router.post("/activate-premium", async (req, res) => {
+  try {
+    const { user_id } = req.body;
+
+    await pool.query(
+      `UPDATE users SET plan = 'premium' WHERE id = $1`,
+      [user_id]
+    );
+    await pool.query(
+      `UPDATE links SET is_premium = true, verified = true, updated_at = NOW() WHERE user_id = $1`,
+      [user_id]
+    );
+
+    res.json({ success: true, message: "Premium ativado" });
+  } catch (error) {
+    console.error("Erro ao ativar premium:", error);
+    res.status(500).json({ success: false, message: "Erro ao ativar premium" });
   }
 });
 
