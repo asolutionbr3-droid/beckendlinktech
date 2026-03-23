@@ -4,10 +4,24 @@ import jwt from "jsonwebtoken";
 import { pool } from "../db.js";
 import { v4 as uuid } from "uuid";
 import { OAuth2Client } from "google-auth-library";
+import nodemailer from "nodemailer";
+import crypto from "crypto";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENTE_ID);
 
 const router = express.Router();
+
+function isBcryptHash(str) {
+  return typeof str === "string" && /^\$2[ab]\$\d+\$/.test(str);
+}
+
+function getMailTransport() {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return null;
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+  });
+}
 
 router.post("/register", async (req, res) => {
   try {
@@ -75,9 +89,18 @@ router.post("/login", async (req, res) => {
     [email]
   );
 
-  if (!user.rows.length) return res.status(401).json({ error: "Usuário não existe" });
+  if (!user.rows.length) return res.status(401).json({ error: "Usuário não encontrado" });
 
-  const valid = await bcrypt.compare(password, user.rows[0].password);
+  const storedPassword = user.rows[0].password;
+
+  // Senha em texto puro (usuários antigos inseridos sem bcrypt)
+  if (!isBcryptHash(storedPassword)) {
+    return res.status(401).json({
+      error: "Sua senha precisa ser redefinida. Use 'Recuperar senha' para criar uma nova.",
+    });
+  }
+
+  const valid = await bcrypt.compare(password, storedPassword);
   if (!valid) return res.status(401).json({ error: "Senha inválida" });
 
   // Buscar slug do usuário
@@ -166,6 +189,109 @@ router.post("/google", async (req, res) => {
   } catch (error) {
     console.error("Erro no login Google:", error);
     res.status(500).json({ error: "Falha ao autenticar com Google" });
+  }
+});
+
+// ── Esqueci minha senha ─────────────────────────────────────────────────────
+router.post("/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "Email obrigatório" });
+
+  try {
+    const userRes = await pool.query("SELECT id FROM users WHERE email=$1", [email]);
+    // Sempre responde 200 para não expor se o email existe
+    if (!userRes.rows.length) {
+      return res.json({ ok: true, message: "Se o email existir, você receberá um link de recuperação." });
+    }
+
+    const userId = userRes.rows[0].id;
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hora
+
+    // Garante que a tabela de tokens existe
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used BOOLEAN NOT NULL DEFAULT false
+      )
+    `);
+
+    // Remove tokens anteriores do mesmo usuário
+    await pool.query("DELETE FROM password_reset_tokens WHERE user_id=$1", [userId]);
+
+    await pool.query(
+      "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1,$2,$3)",
+      [userId, token, expiresAt]
+    );
+
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    const resetLink = `${frontendUrl}/recuperar-senha?token=${token}`;
+
+    const transporter = getMailTransport();
+    if (transporter) {
+      await transporter.sendMail({
+        from: `"TechLink" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Recuperação de senha – TechLink",
+        html: `
+          <p>Olá!</p>
+          <p>Você solicitou a recuperação de senha. Clique no link abaixo para criar uma nova senha:</p>
+          <p><a href="${resetLink}">${resetLink}</a></p>
+          <p>Este link expira em 1 hora.</p>
+          <p>Se não foi você, ignore este email.</p>
+        `,
+      });
+    } else {
+      // Sem email configurado: exibe link no console (dev)
+      console.log("⚠️  EMAIL não configurado. Link de reset:", resetLink);
+    }
+
+    res.json({ ok: true, message: "Se o email existir, você receberá um link de recuperação." });
+  } catch (err) {
+    console.error("Erro forgot-password:", err);
+    res.status(500).json({ error: "Erro ao processar solicitação" });
+  }
+});
+
+// ── Redefinir senha com token ────────────────────────────────────────────────
+router.post("/reset-password", async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ error: "Token e senha são obrigatórios" });
+  if (password.length < 6) return res.status(400).json({ error: "Senha deve ter pelo menos 6 caracteres" });
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used BOOLEAN NOT NULL DEFAULT false
+      )
+    `);
+
+    const tokenRes = await pool.query(
+      "SELECT * FROM password_reset_tokens WHERE token=$1 AND used=false AND expires_at > NOW()",
+      [token]
+    );
+
+    if (!tokenRes.rows.length) {
+      return res.status(400).json({ error: "Token inválido ou expirado. Solicite um novo link." });
+    }
+
+    const { user_id } = tokenRes.rows[0];
+    const hash = await bcrypt.hash(password, 10);
+
+    await pool.query("UPDATE users SET password=$1 WHERE id=$2", [hash, user_id]);
+    await pool.query("UPDATE password_reset_tokens SET used=true WHERE token=$1", [token]);
+
+    res.json({ ok: true, message: "Senha redefinida com sucesso!" });
+  } catch (err) {
+    console.error("Erro reset-password:", err);
+    res.status(500).json({ error: "Erro ao redefinir senha" });
   }
 });
 
