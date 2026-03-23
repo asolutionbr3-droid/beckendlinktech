@@ -14,6 +14,7 @@ app.use(cors({
   origin: [
     "http://localhost:5173",
     "http://localhost:3000",
+    "https://tech-bay-two.vercel.app",
     process.env.FRONTEND_URL,
   ].filter(Boolean),
   credentials: true,
