@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id         String   @id @default(uuid())
+  name       String
+  email      String   @unique
+  password   String
+  role       String   @default("user")
+  plan       String   @default("free")
+  theme      String   @default("dark-night")
+  created_at DateTime @default(now())
+
+  profiles       Profile[]
+  links          Link[]
+  premiumUsers   PremiumUser[]
+  passwordTokens PasswordResetToken[]
+
+  @@map("users")
+}
+
+model Profile {
+  id           String   @id @default(uuid())
+  user_id      String
+  nome         String   @default("")
+  display_name String   @default("")
+  uber         Boolean  @default(false)
+  app99        Boolean  @default(false)
+  eletrico     Boolean  @default(false)
+  cidade       String   @default("")
+  whatsapp     String   @default("")
+  pix          String   @default("")
+  foto         String   @default("")
+  created_at   DateTime @default(now())
+  updated_at   DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Link {
+  id         String   @id @default(uuid())
+  user_id    String
+  slug       String   @unique
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("links")
+}
+
+model PremiumUser {
+  id             String   @id @default(uuid())
+  user_id        String   @unique
+  activated_at   DateTime @default(now())
+  stripe_session String?
+  theme          String   @default("dark-night")
+  active         Boolean  @default(true)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("premium_users")
+}
+
+model PasswordResetToken {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String
+  token      String   @unique
+  expires_at DateTime
+  used       Boolean  @default(false)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}

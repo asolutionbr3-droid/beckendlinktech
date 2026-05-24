@@ -1,6 +1,6 @@
 import express from "express";
 import Stripe from "stripe";
-import { pool } from "../db.js";
+import { supabase } from "../supabase.js";
 
 const router = express.Router();
 
@@ -13,7 +13,7 @@ const getStripe = () => {
   return _stripe;
 };
 
-// ── Criar sessão de checkout ─────────────────────────────────────────────────
+// Criar sessão de checkout
 router.post("/create-checkout", async (req, res) => {
   try {
     const { userId, theme } = req.body;
@@ -22,12 +22,7 @@ router.post("/create-checkout", async (req, res) => {
     const session = await getStripe().checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price: process.env.STRIPE_PRICE_ID,
-          quantity: 1,
-        },
-      ],
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
       metadata: { userId, theme: theme || "dark-night" },
       success_url: `${process.env.FRONTEND_URL}/dashboard/premium-user?success=1&theme=${theme || "dark-night"}`,
       cancel_url:  `${process.env.FRONTEND_URL}/dashboard/premium?canceled=1`,
@@ -40,7 +35,7 @@ router.post("/create-checkout", async (req, res) => {
   }
 });
 
-// ── Webhook do Stripe ────────────────────────────────────────────────────────
+// Webhook do Stripe
 router.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -54,14 +49,42 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
-    const { userId, theme } = session.metadata;
+    const { userId, theme } = session.metadata || {};
+    const email = session.customer_details?.email || session.customer_email;
 
     try {
-      await pool.query(
-        "UPDATE users SET plan = 'premium', theme = $1 WHERE id = $2",
-        [theme || "dark-night", userId]
-      );
-      console.log(`✓ Usuário ${userId} agora é premium | tema: ${theme}`);
+      if (userId) {
+        await supabase
+          .from("profiles")
+          .update({ plan: "premium", theme: theme || "dark-night" })
+          .eq("user_id", userId);
+
+        await supabase
+          .from("links")
+          .update({ is_premium: true, verified: true })
+          .eq("user_id", userId);
+
+        console.log(`✓ Usuário ${userId} agora é premium | tema: ${theme}`);
+      } else if (email) {
+        // Payment Link estático — identificar por email via auth.users
+        const { data: authUser } = await supabase.auth.admin.getUserByEmail(email);
+
+        if (authUser?.user?.id) {
+          await supabase
+            .from("profiles")
+            .update({ plan: "premium" })
+            .eq("user_id", authUser.user.id);
+
+          await supabase
+            .from("links")
+            .update({ is_premium: true, verified: true })
+            .eq("user_id", authUser.user.id);
+
+          console.log(`✓ Usuário ${email} ativado como premium via Payment Link`);
+        } else {
+          console.warn(`⚠️ Pagamento recebido mas email ${email} não encontrado`);
+        }
+      }
     } catch (err) {
       console.error("Erro ao atualizar plano:", err.message);
     }
@@ -70,26 +93,28 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
   res.json({ received: true });
 });
 
-// ── Salvar tema (usuário premium já pago) ────────────────────────────────────
+// Salvar tema
 router.post("/save-theme", async (req, res) => {
   try {
     const { userId, theme } = req.body;
-    await pool.query("UPDATE users SET theme = $1 WHERE id = $2", [theme, userId]);
+    await supabase.from("profiles").update({ theme }).eq("user_id", userId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Buscar plano e tema do usuário ───────────────────────────────────────────
+// Buscar plano e tema
 router.get("/plan/:userId", async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT plan, theme FROM users WHERE id = $1",
-      [req.params.userId]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: "Usuário não encontrado" });
-    res.json({ plan: result.rows[0].plan, theme: result.rows[0].theme || "green-pro" });
+    const { data } = await supabase
+      .from("profiles")
+      .select("plan, theme")
+      .eq("user_id", req.params.userId)
+      .single();
+
+    if (!data) return res.status(404).json({ error: "Usuário não encontrado" });
+    res.json({ plan: data.plan || "free", theme: data.theme || "green-pro" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

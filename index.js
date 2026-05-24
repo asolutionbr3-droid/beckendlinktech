@@ -10,15 +10,14 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "https://tech-bay-two.vercel.app",
-    process.env.FRONTEND_URL,
-  ].filter(Boolean),
-  credentials: true,
-}));
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://tech-production-6d4f.up.railway.app",
+  process.env.FRONTEND_URL,
+].filter((v, i, arr) => v && arr.indexOf(v) === i); // deduplica
+
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json());
 
 // ─── Rotas existentes (JWT) ────────────────────────────────────────────────
@@ -35,11 +34,12 @@ app.use("/payment", payment);
 // app.all("/api/auth/*", toNodeHandler(auth));
 
 // ─── Test DB ───────────────────────────────────────────────────────────────
-app.get("/test-db", async (req, res) => {
+app.get("/test-db", async (_req, res) => {
   try {
-    const { pool } = await import("./db.js");
-    const result = await pool.query("SELECT NOW()");
-    res.json({ ok: true, time: result.rows[0].now });
+    const { supabase } = await import("./supabase.js");
+    const { data, error } = await supabase.from("profiles").select("count").limit(1);
+    if (error) throw error;
+    res.json({ ok: true, supabase: "connected" });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

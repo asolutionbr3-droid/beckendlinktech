@@ -1,48 +1,28 @@
 import express from "express";
-import { pool } from "../db.js";
+import { supabase } from "../supabase.js";
 import { v4 as uuid } from "uuid";
 
 const router = express.Router();
 
-// Salvar dados do perfil
+// Salvar perfil
 router.post("/profile", async (req, res) => {
   try {
-    const { 
-      user_id, 
-      nome, 
-      displayName, 
-      uber, 
-      app99, 
-      eletrico, 
-      cidade, 
-      whatsapp, 
-      pix, 
-      foto 
-    } = req.body;
+    const { user_id, nome, displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto } = req.body;
 
-    // Verificar se já existe perfil para este usuário
-    const existingProfile = await pool.query(
-      "SELECT id FROM profiles WHERE user_id = $1",
-      [user_id]
-    );
+    const { data: existing } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("user_id", user_id);
 
-    if (existingProfile.rows.length > 0) {
-      // Atualizar perfil existente
-      await pool.query(
-        `UPDATE profiles SET 
-         nome = $1, display_name = $2, uber = $3, app99 = $4, eletrico = $5,
-         cidade = $6, whatsapp = $7, pix = $8, foto = $9, updated_at = NOW()
-         WHERE user_id = $10`,
-        [nome, displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto, user_id]
-      );
+    if (existing?.length) {
+      await supabase
+        .from("profiles")
+        .update({ nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto, updated_at: new Date().toISOString() })
+        .eq("user_id", user_id);
     } else {
-      // Criar novo perfil
-      await pool.query(
-        `INSERT INTO profiles 
-         (id, user_id, nome, display_name, uber, app99, eletrico, cidade, whatsapp, pix, foto)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [uuid(), user_id, nome, displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto]
-      );
+      await supabase
+        .from("profiles")
+        .insert({ id: uuid(), user_id, nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto });
     }
 
     res.json({ success: true, message: "Perfil salvo com sucesso!" });
@@ -52,89 +32,58 @@ router.post("/profile", async (req, res) => {
   }
 });
 
-// Buscar dados do perfil
+// Buscar perfil
 router.get("/profile/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
-    
-    const result = await pool.query(
-      "SELECT * FROM profiles WHERE user_id = $1",
-      [user_id]
-    );
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("user_id", user_id)
+      .single();
 
-    if (result.rows.length === 0) {
-      return res.json({ success: false, message: "Perfil não encontrado" });
-    }
-
-    res.json({ success: true, profile: result.rows[0] });
+    if (!data) return res.json({ success: false, message: "Perfil não encontrado" });
+    res.json({ success: true, profile: data });
   } catch (error) {
     console.error("Erro ao buscar perfil:", error);
     res.status(500).json({ success: false, message: "Erro ao buscar perfil" });
   }
 });
 
-// Gerar link único para usuário
-router.post("/generate-link", async (req, res) => {
+// Buscar slug do usuário
+router.get("/slug/:user_id", async (req, res) => {
   try {
-    const { user_id } = req.body;
-    
-    // Verificar se já existe link
-    const existingLink = await pool.query(
-      "SELECT slug FROM links WHERE user_id = $1",
-      [user_id]
-    );
-    
-    let slug;
-    
-    if (existingLink.rows.length > 0) {
-      slug = existingLink.rows[0].slug;
-    } else {
-      // Gerar slug único
-      slug = Math.random().toString(36).substring(2, 8);
-      await pool.query(
-        "INSERT INTO links (id, user_id, slug) VALUES ($1,$2,$3)",
-        [uuid(), user_id, slug]
-      );
-    }
+    const { data } = await supabase
+      .from("links")
+      .select("slug")
+      .eq("user_id", req.params.user_id)
+      .single();
 
-    res.json({ 
-      success: true, 
-      link: `https://techlinks.app/${slug}`,
-      slug: slug 
-    });
+    res.json({ slug: data?.slug || null });
   } catch (error) {
-    console.error("Erro ao gerar link:", error);
-    res.status(500).json({ success: false, message: "Erro ao gerar link" });
+    res.status(500).json({ slug: null });
   }
 });
 
-// Atualizar slug do usuário
+// Atualizar slug
 router.put("/update-slug", async (req, res) => {
   try {
     const { user_id, slug } = req.body;
 
     if (!slug || !/^[a-z0-9_-]{3,30}$/.test(slug)) {
-      return res.status(400).json({
-        success: false,
-        message: "Slug inválido. Use apenas letras minúsculas, números, hífen ou underline (3–30 caracteres)."
-      });
+      return res.status(400).json({ success: false, message: "Slug inválido. Use apenas letras minúsculas, números, hífen ou underline (3–30 caracteres)." });
     }
 
-    // Verificar se slug já está em uso por outro usuário
-    const existing = await pool.query(
-      "SELECT user_id FROM links WHERE slug = $1",
-      [slug]
-    );
+    const { data: existing } = await supabase
+      .from("links")
+      .select("user_id")
+      .eq("slug", slug);
 
-    if (existing.rows.length > 0 && existing.rows[0].user_id !== user_id) {
+    if (existing?.length && existing[0].user_id !== user_id) {
       return res.status(409).json({ success: false, message: "Este slug já está em uso." });
     }
 
-    await pool.query(
-      "UPDATE links SET slug = $1 WHERE user_id = $2",
-      [slug, user_id]
-    );
-
+    await supabase.from("links").update({ slug }).eq("user_id", user_id);
     res.json({ success: true, slug });
   } catch (error) {
     console.error("Erro ao atualizar slug:", error);
@@ -142,16 +91,44 @@ router.put("/update-slug", async (req, res) => {
   }
 });
 
-// CRUD para serviços customizados
+// Gerar link único
+router.post("/generate-link", async (req, res) => {
+  try {
+    const { user_id } = req.body;
+    const { data: existing } = await supabase
+      .from("links")
+      .select("slug")
+      .eq("user_id", user_id)
+      .single();
+
+    const slug = existing?.slug || Math.random().toString(36).substring(2, 8);
+
+    if (!existing) {
+      await supabase.from("links").insert({ id: uuid(), user_id, slug });
+    }
+
+    res.json({ success: true, link: `https://techlinks.app/${slug}`, slug });
+  } catch (error) {
+    console.error("Erro ao gerar link:", error);
+    res.status(500).json({ success: false, message: "Erro ao gerar link" });
+  }
+});
+
+// Adicionar serviço
 router.post("/services", async (req, res) => {
   try {
     const { user_id, title, url, numero, icon, color, order } = req.body;
 
-    await pool.query(
-      `INSERT INTO "serviços" (id, user_id, "titulo do botão", link_url, numero, icon, color, position)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [uuid(), user_id, title, url, numero || '', icon || '🔗', color || '#4CAF50', order || 0]
-    );
+    await supabase.from("servicos").insert({
+      id: uuid(),
+      user_id,
+      title,
+      url: url || "",
+      numero: numero || "",
+      icon: icon || "🔗",
+      color: color || "#4CAF50",
+      position: order || 0,
+    });
 
     res.json({ success: true, message: "Serviço adicionado" });
   } catch (error) {
@@ -160,33 +137,35 @@ router.post("/services", async (req, res) => {
   }
 });
 
+// Listar serviços
 router.get("/services/:user_id", async (req, res) => {
   try {
-    const { user_id } = req.params;
+    const { data } = await supabase
+      .from("servicos")
+      .select("*")
+      .eq("user_id", req.params.user_id)
+      .order("position", { ascending: true });
 
-    const result = await pool.query(
-      `SELECT id, user_id, "titulo do botão" AS title, link_url AS url, numero, icon, color, position
-       FROM "serviços" WHERE user_id = $1 ORDER BY position ASC`,
-      [user_id]
-    );
-
-    res.json({ success: true, services: result.rows });
+    res.json({ success: true, services: data || [] });
   } catch (error) {
     console.error("Erro ao buscar serviços:", error);
     res.status(500).json({ success: false, message: "Erro ao buscar serviços" });
   }
 });
 
+// Atualizar serviço
 router.put("/services/:id", async (req, res) => {
   try {
-    const { id } = req.params;
     const { title, url, numero, icon, color, order } = req.body;
 
-    await pool.query(
-      `UPDATE "serviços" SET "titulo do botão" = $1, link_url = $2, numero = $3,
-       icon = $4, color = $5, position = $6 WHERE id = $7`,
-      [title, url, numero || '', icon, color, order ?? 0, id]
-    );
+    await supabase.from("servicos").update({
+      title,
+      url: url || "",
+      numero: numero || "",
+      icon,
+      color,
+      position: order ?? 0,
+    }).eq("id", req.params.id);
 
     res.json({ success: true, message: "Serviço atualizado" });
   } catch (error) {
@@ -195,12 +174,10 @@ router.put("/services/:id", async (req, res) => {
   }
 });
 
+// Deletar serviço
 router.delete("/services/:id", async (req, res) => {
   try {
-    const { id } = req.params;
-
-    await pool.query(`DELETE FROM "serviços" WHERE id = $1`, [id]);
-
+    await supabase.from("servicos").delete().eq("id", req.params.id);
     res.json({ success: true, message: "Serviço excluído" });
   } catch (error) {
     console.error("Erro ao excluir serviço:", error);
@@ -208,45 +185,46 @@ router.delete("/services/:id", async (req, res) => {
   }
 });
 
-// Buscar dados públicos pelo slug
+// Perfil público por slug
 router.get("/public/:slug", async (req, res) => {
   try {
     const { slug } = req.params;
 
-    const profileResult = await pool.query(
-      `SELECT p.*, u.plan, u.theme,
-              l.is_premium, l.theme AS link_theme, l.qr_enabled, l.verified, l.custom_color
-       FROM profiles p
-       JOIN links l ON p.user_id = l.user_id
-       JOIN users u ON u.id = p.user_id
-       WHERE l.slug = $1`,
-      [slug]
-    );
+    const { data: linkData } = await supabase
+      .from("links")
+      .select("*")
+      .eq("slug", slug)
+      .single();
 
-    if (profileResult.rows.length === 0) {
-      return res.json({ success: false, message: "Link não encontrado" });
-    }
+    if (!linkData) return res.json({ success: false, message: "Link não encontrado" });
 
-    const row  = profileResult.rows[0];
-    const plan = row.plan || 'free';
-    const limit = plan === 'premium' ? 15 : 5;
+    const [{ data: profile }, { data: profileMeta }] = await Promise.all([
+      supabase.from("profiles").select("*").eq("user_id", linkData.user_id).single(),
+      supabase.from("profiles").select("plan, theme").eq("user_id", linkData.user_id).single(),
+    ]);
 
-    const servicesResult = await pool.query(
-      `SELECT id, user_id, "titulo do botão" AS title, link_url AS url, numero, icon, color, position
-       FROM "serviços" WHERE user_id = $1 ORDER BY position ASC LIMIT $2`,
-      [row.user_id, limit]
-    );
+    if (!profile) return res.json({ success: false, message: "Perfil não encontrado" });
+
+    const plan = profileMeta?.plan || "free";
+    const limit = plan === "premium" ? 15 : 5;
+
+    const { data: services } = await supabase
+      .from("servicos")
+      .select("*")
+      .eq("user_id", linkData.user_id)
+      .order("position", { ascending: true })
+      .limit(limit);
 
     res.json({
-      success:      true,
+      success: true,
       plan,
-      theme:        row.link_theme || row.theme || 'green-pro',
-      is_premium:   row.is_premium  || false,
-      qr_enabled:   row.qr_enabled  || false,
-      verified:     row.verified     || false,
-      custom_color: row.custom_color || null,
-      profile:      row,
-      services:     servicesResult.rows,
+      theme: linkData.theme || profileMeta?.theme || "green-pro",
+      is_premium: linkData.is_premium || false,
+      qr_enabled: linkData.qr_enabled || false,
+      verified: linkData.verified || false,
+      custom_color: linkData.custom_color || null,
+      profile: { ...profile, plan, theme: profileMeta?.theme },
+      services: services || [],
     });
   } catch (error) {
     console.error("Erro ao buscar perfil público:", error);
@@ -254,21 +232,17 @@ router.get("/public/:slug", async (req, res) => {
   }
 });
 
-// Atualizar configurações premium do link (tema, qr, cor)
+// Atualizar configurações do link (tema, qr, cor)
 router.put("/link-settings", async (req, res) => {
   try {
     const { user_id, theme, qr_enabled, custom_color } = req.body;
 
-    await pool.query(
-      `UPDATE links SET
-         theme        = COALESCE($1, theme),
-         qr_enabled   = COALESCE($2, qr_enabled),
-         custom_color = COALESCE($3, custom_color),
-         updated_at   = NOW()
-       WHERE user_id = $4`,
-      [theme, qr_enabled, custom_color, user_id]
-    );
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (theme !== undefined) update.theme = theme;
+    if (qr_enabled !== undefined) update.qr_enabled = qr_enabled;
+    if (custom_color !== undefined) update.custom_color = custom_color;
 
+    await supabase.from("links").update(update).eq("user_id", user_id);
     res.json({ success: true, message: "Configurações do link atualizadas" });
   } catch (error) {
     console.error("Erro ao atualizar link-settings:", error);
@@ -276,19 +250,13 @@ router.put("/link-settings", async (req, res) => {
   }
 });
 
-// Ativar plano premium após pagamento (chamado pelo webhook do Stripe)
+// Ativar premium
 router.post("/activate-premium", async (req, res) => {
   try {
     const { user_id } = req.body;
 
-    await pool.query(
-      `UPDATE users SET plan = 'premium' WHERE id = $1`,
-      [user_id]
-    );
-    await pool.query(
-      `UPDATE links SET is_premium = true, verified = true, updated_at = NOW() WHERE user_id = $1`,
-      [user_id]
-    );
+    await supabase.from("profiles").update({ plan: "premium" }).eq("user_id", user_id);
+    await supabase.from("links").update({ is_premium: true, verified: true, updated_at: new Date().toISOString() }).eq("user_id", user_id);
 
     res.json({ success: true, message: "Premium ativado" });
   } catch (error) {
