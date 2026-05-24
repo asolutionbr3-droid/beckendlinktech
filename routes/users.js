@@ -237,7 +237,7 @@ router.put("/link-settings", async (req, res) => {
   try {
     const { user_id, theme, qr_enabled, custom_color } = req.body;
 
-    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const update = { updated_at: new Date().toISOString() };
     if (theme !== undefined) update.theme = theme;
     if (qr_enabled !== undefined) update.qr_enabled = qr_enabled;
     if (custom_color !== undefined) update.custom_color = custom_color;
