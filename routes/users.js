@@ -9,6 +9,15 @@ router.post("/profile", async (req, res) => {
   try {
     const { user_id, nome, displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto } = req.body;
 
+    const { data: linkRow } = await supabase
+      .from("links")
+      .select("slug")
+      .eq("user_id", user_id)
+      .single();
+
+    const slug = linkRow?.slug || "";
+    const link_publico = slug ? `https://techlinks.app/${slug}` : "";
+
     const { data: existing } = await supabase
       .from("profiles")
       .select("id")
@@ -17,12 +26,12 @@ router.post("/profile", async (req, res) => {
     if (existing?.length) {
       await supabase
         .from("profiles")
-        .update({ nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto, updated_at: new Date().toISOString() })
+        .update({ nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto, link_publico, updated_at: new Date().toISOString() })
         .eq("user_id", user_id);
     } else {
       await supabase
         .from("profiles")
-        .insert({ id: uuid(), user_id, nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto });
+        .insert({ id: uuid(), user_id, nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto, link_publico });
     }
 
     res.json({ success: true, message: "Perfil salvo com sucesso!" });
@@ -118,12 +127,14 @@ router.post("/generate-link", async (req, res) => {
 router.post("/services", async (req, res) => {
   try {
     const { user_id, title, url, numero, icon, color, order } = req.body;
+    const servico = url ? `${title} | ${url}` : title;
 
     await supabase.from("servicos").insert({
       id: uuid(),
       user_id,
       title,
       url: url || "",
+      servico,
       numero: numero || "",
       icon: icon || "🔗",
       color: color || "#4CAF50",
@@ -157,10 +168,12 @@ router.get("/services/:user_id", async (req, res) => {
 router.put("/services/:id", async (req, res) => {
   try {
     const { title, url, numero, icon, color, order } = req.body;
+    const servico = url ? `${title} | ${url}` : title;
 
     await supabase.from("servicos").update({
       title,
       url: url || "",
+      servico,
       numero: numero || "",
       icon,
       color,
