@@ -33,6 +33,11 @@ app.use("/payment", payment);
 // import { auth } from "./src/lib/auth.js";
 // app.all("/api/auth/*", toNodeHandler(auth));
 
+// ─── Health check ─────────────────────────────────────────────────────────
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, status: "running", timestamp: new Date().toISOString() });
+});
+
 // ─── Test DB ───────────────────────────────────────────────────────────────
 app.get("/test-db", async (_req, res) => {
   try {
