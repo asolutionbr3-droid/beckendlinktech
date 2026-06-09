@@ -9,30 +9,36 @@ router.post("/profile", async (req, res) => {
   try {
     const { user_id, nome, displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto } = req.body;
 
-    const { data: linkRow } = await supabase
-      .from("links")
-      .select("slug")
-      .eq("user_id", user_id)
-      .single();
-
-    const slug = linkRow?.slug || "";
-    const link_publico = slug ? `https://techlinks.app/${slug}` : "";
-
     const { data: existing } = await supabase
       .from("profiles")
       .select("id")
       .eq("user_id", user_id);
 
+    const basePayload = { nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto };
+
     if (existing?.length) {
       await supabase
         .from("profiles")
-        .update({ nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto, link_publico, updated_at: new Date().toISOString() })
+        .update({ ...basePayload, updated_at: new Date().toISOString() })
         .eq("user_id", user_id);
     } else {
       await supabase
         .from("profiles")
-        .insert({ id: uuid(), user_id, nome, display_name: displayName, uber, app99, eletrico, cidade, whatsapp, pix, foto, link_publico });
+        .insert({ id: uuid(), user_id, ...basePayload });
     }
+
+    // Atualiza link_publico separadamente (coluna pode não existir ainda)
+    try {
+      const { data: linkRow } = await supabase
+        .from("links").select("slug").eq("user_id", user_id).single();
+      const slug = linkRow?.slug || "";
+      if (slug) {
+        await supabase
+          .from("profiles")
+          .update({ link_publico: `https://techlinks.app/${slug}` })
+          .eq("user_id", user_id);
+      }
+    } catch (_) { /* coluna link_publico ainda não existe, ignorar */ }
 
     res.json({ success: true, message: "Perfil salvo com sucesso!" });
   } catch (error) {
@@ -45,14 +51,14 @@ router.post("/profile", async (req, res) => {
 router.get("/profile/:user_id", async (req, res) => {
   try {
     const { user_id } = req.params;
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("user_id", user_id)
-      .single();
+    const [{ data }, { data: linkData }] = await Promise.all([
+      supabase.from("profiles").select("*").eq("user_id", user_id).single(),
+      supabase.from("links").select("slug").eq("user_id", user_id).single(),
+    ]);
 
     if (!data) return res.json({ success: false, message: "Perfil não encontrado" });
-    res.json({ success: true, profile: data });
+    const slug = linkData?.slug || null;
+    res.json({ success: true, profile: { ...data, slug } });
   } catch (error) {
     console.error("Erro ao buscar perfil:", error);
     res.status(500).json({ success: false, message: "Erro ao buscar perfil" });
@@ -129,19 +135,24 @@ router.post("/services", async (req, res) => {
     const { user_id, title, url, numero, icon, color, order } = req.body;
     const servico = url ? `${title} | ${url}` : title;
 
-    await supabase.from("servicos").insert({
-      id: uuid(),
-      user_id,
-      title,
-      url: url || "",
-      servico,
-      numero: numero || "",
-      icon: icon || "🔗",
-      color: color || "#4CAF50",
-      position: order || 0,
-    });
+    const { data: newService, error } = await supabase
+      .from("servicos")
+      .insert({
+        id: uuid(),
+        user_id,
+        title,
+        url: url || "",
+        servico,
+        numero: numero || "",
+        icon: icon || "🔗",
+        color: color || "#4CAF50",
+        position: order || 0,
+      })
+      .select()
+      .single();
 
-    res.json({ success: true, message: "Serviço adicionado" });
+    if (error) throw error;
+    res.json({ success: true, message: "Serviço adicionado", service: newService });
   } catch (error) {
     console.error("Erro ao adicionar serviço:", error);
     res.status(500).json({ success: false, message: "Erro ao adicionar serviço" });
@@ -236,6 +247,7 @@ router.get("/public/:slug", async (req, res) => {
       qr_enabled: linkData.qr_enabled || false,
       verified: linkData.verified || false,
       custom_color: linkData.custom_color || null,
+      floating_icons: linkData.floating_icons || null,
       profile: { ...profile, plan, theme: profileMeta?.theme },
       services: services || [],
     });
@@ -245,15 +257,16 @@ router.get("/public/:slug", async (req, res) => {
   }
 });
 
-// Atualizar configurações do link (tema, qr, cor)
+// Atualizar configurações do link (tema, qr, cor, ícones)
 router.put("/link-settings", async (req, res) => {
   try {
-    const { user_id, theme, qr_enabled, custom_color } = req.body;
+    const { user_id, theme, qr_enabled, custom_color, floating_icons } = req.body;
 
     const update = { updated_at: new Date().toISOString() };
     if (theme !== undefined) update.theme = theme;
     if (qr_enabled !== undefined) update.qr_enabled = qr_enabled;
     if (custom_color !== undefined) update.custom_color = custom_color;
+    if (floating_icons !== undefined) update.floating_icons = floating_icons;
 
     await supabase.from("links").update(update).eq("user_id", user_id);
     res.json({ success: true, message: "Configurações do link atualizadas" });

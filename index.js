@@ -10,14 +10,7 @@ dotenv.config();
 
 const app = express();
 
-const ALLOWED_ORIGINS = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "https://tech-production-6d4f.up.railway.app",
-  process.env.FRONTEND_URL,
-].filter((v, i, arr) => v && arr.indexOf(v) === i); // deduplica
-
-app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 // ─── Rotas existentes (JWT) ────────────────────────────────────────────────
